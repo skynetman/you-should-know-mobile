@@ -44,7 +44,7 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 - Runs one slash command by itself, `/side-note`, at most once per note and never while one is already queued. Claude Code starts it when the session is idle.
 - Hooks the `session.append` event to change a single kind of row: the one where `/side-note` holds Claude Code's fallback message, which gets the note instead. Every other row passes as it is.
 - Sends nothing over the network.
-- Each delivered note becomes part of the conversation, adding a few hundred tokens, and the model reads it as context, so you don't need to paste it back to Claude.
+- Each delivered note becomes part of the conversation and adds a few hundred tokens. Claude Code hands command output to the model as context, not as a request, so Claude does not act on a note by itself: to have one taken into account, say so in your next message (for example, "consider the note above").
 
 ## Requirements
 
