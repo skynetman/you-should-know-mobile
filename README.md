@@ -8,7 +8,7 @@ A Claude Code mod that brings the notes of the built-in "You should know" side a
 
 1. Every 4 seconds the mod reads the built-in plugin's data file and looks for a new note in the current session.
 2. When it finds one, it runs `/side-note` by itself, once per note: the short line and its later explanation count as one. Claude Code queues the command until the session is idle, so the note arrives at the end of the turn, in its latest version.
-3. The command prints the title of the note, then its text in a code block, which the mobile app shows with a copy button.
+3. The command prints the title of the note, numbered within the session ("side note 3"), then its text in a code block, which the mobile app shows with a copy button.
 4. On the computer the note is already above the prompt, so the mod asks Claude Code to draw the output as a single dimmed line. The VS Code extension (2.1.322) ignores that and prints the full note in the chat too.
 
 The mod uses a command because, in a test on Android, the mobile app showed command output but not rows a mod places in the transcript (`$.ui.place`) or system notices (`$.session.append`). The app also does not draw the band above the prompt.
@@ -39,12 +39,12 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 ## What it reads, stores, and runs
 
 - Reads `~/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json`, the built-in plugin's data file, every 4 seconds.
-- Keeps the latest note of each of the last 50 sessions in its own plugin store, along with a key for each note it has already delivered and a mark while a `/side-note` waits in the queue.
+- Keeps the latest note of each of the last 50 sessions in its own plugin store, along with a key for each note it has already delivered, the number of notes printed in each session, and a mark while a `/side-note` waits in the queue.
 - Logs its last 100 events in the same store: each command it runs, and each read error that differs from the previous one. It writes no file.
 - Runs one slash command by itself, `/side-note`, at most once per note and never while one is already queued. Claude Code starts it when the session is idle.
 - Hooks the `session.append` event to change a single kind of row: the one where `/side-note` holds Claude Code's fallback message, which gets the note instead. Every other row passes as it is.
 - Sends nothing over the network.
-- Each delivered note becomes part of the conversation and adds a few hundred tokens. Claude Code hands command output to the model as context, not as a request, so Claude does not act on a note by itself: to have one taken into account, say so in your next message (for example, "consider the note above"). Under each note the mod adds a line telling Claude that the side agent wrote it and that you have neither asked for it nor approved it.
+- Each delivered note becomes part of the conversation and adds a few hundred tokens. Claude Code hands command output to the model as context, not as a request, so Claude does not act on a note by itself. To have one taken into account, name it in your next message, for example "consider side note 3" or "consider the last side note"; you don't need to copy it. Under each note the mod adds a line telling Claude that the side agent wrote it and that you have neither asked for it nor approved it.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 - On the phone you get the text only, without the band's buttons. An explanation is included only when the side agent has already written it.
 - In a session started from the phone, with no terminal or editor attached, the built-in plugin does not launch its side agent, so there are no notes to bring.
 - In the VS Code extension you see each note twice: above the prompt and in the chat.
-- If the side agent writes a second note before the queued `/side-note` runs, only the newer one reaches the chat.
+- If the side agent writes a second note before the queued `/side-note` runs, only the newer one reaches the chat, under the same number.
 
 ## Development
 
