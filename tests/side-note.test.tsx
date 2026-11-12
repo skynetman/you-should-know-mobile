@@ -98,3 +98,64 @@ test('on the computer the automatic output is one line, the manual one stays who
     await manual.unmount()
   }
 })
+
+// The built-in plugin's data file, as the mod finds and reads it every 4 seconds.
+const BUILTIN_ENTRY = { name: 'cc-plugin-you-should-know_builtin-abc.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false } as const
+const builtinFile = (view: unknown) => JSON.stringify({ sessions: [{ id: SID, tag: 'Heads up', view }] })
+
+test('a note and its later explanation are delivered once', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  mock.store(on)
+  mock.env(on, { HOME: '/home/u' })
+  mock.session(on)
+  on('session.id', () => ({ value: SID }))
+  on('command.register', () => ({ value: { command: 'side-note' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  let view: unknown = { kind: 'offer', line: 'Line A', shownAt: 1 }
+  on('fs.list', () => ({ value: [BUILTIN_ENTRY] }))
+  on('fs.read', () => ({ value: builtinFile(view) }))
+  const runs: string[] = []
+  on('command.run', (_, e) => {
+    runs.push(e.command)
+    return { text: '' }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(4600)
+  expect(runs).toEqual(['side-note'])
+
+  // the queued command has run, and its row clears the queue
+  await $.session.append(row(FALLBACK_ROW, 'row-3'))
+  view = { kind: 'explained', line: 'Line A', text: 'The long explanation.', iteration: 1, shownAt: 2 }
+  await clock.advance(4600)
+  expect(runs).toEqual(['side-note'])
+})
+
+test('while a /side-note is queued, a new note queues no other and the queued one prints it', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  mock.store(on)
+  mock.env(on, { HOME: '/home/u' })
+  const session = mock.session(on)
+  on('session.id', () => ({ value: SID }))
+  on('command.register', () => ({ value: { command: 'side-note' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  let view: unknown = { kind: 'offer', line: 'Line A', shownAt: 1 }
+  on('fs.list', () => ({ value: [BUILTIN_ENTRY] }))
+  on('fs.read', () => ({ value: builtinFile(view) }))
+  const runs: string[] = []
+  on('command.run', (_, e) => {
+    runs.push(e.command)
+    return { text: '' }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(4600)
+  view = { kind: 'offer', line: 'Line B', shownAt: 3 }
+  await clock.advance(4600)
+  expect(runs).toEqual(['side-note'])
+
+  await $.session.append(row(FALLBACK_ROW, 'row-4'))
+  const rows = session.appended()
+  const block = rows[rows.length - 1]?.message.content[0] as { type: string; text?: string } | undefined
+  expect(block?.text).toContain('Line B')
+})

@@ -101,9 +101,32 @@ function format(note: string): string {
   return body === '' ? fence(head) : `${head}\n\n${fence(body)}`
 }
 
-function idOf(view: View): string {
-  const kind = view.kind === 'explained' ? 'e' : 'o'
-  return `${view.shownAt ?? 0}-${kind}${view.iteration ?? 0}`
+/**
+ * One key per note: the short line and its later explanation share the same
+ * `line`, so they count as one note and are delivered once.
+ */
+function keyOf(sid: string, view: View): string {
+  return view.line ? `${sid}|${view.line}` : `${sid}|${view.shownAt ?? 0}`
+}
+
+/** A queued /side-note older than this is taken as lost, and a new one may be queued. */
+const PENDING_MS = 6 * 60 * 60 * 1000
+
+async function pending($: EngineInterface): Promise<Record<string, number>> {
+  const all = await $.store.get('pending').catch(() => undefined)
+  const out: Record<string, number> = {}
+  if (all && typeof all === 'object') {
+    for (const [sid, at] of Object.entries(all as Record<string, unknown>)) {
+      if (typeof at === 'number') out[sid] = at
+    }
+  }
+  return out
+}
+
+async function setPending($: EngineInterface, sid: string, at: number | undefined): Promise<void> {
+  const others = Object.entries(await pending($)).filter(([key]) => key !== sid)
+  const next = at === undefined ? others : [...others, [sid, at] as const]
+  await $.store.set('pending', Object.fromEntries(next.slice(-MAX_SESSIONS)))
 }
 
 /** The latest note of each session, in $.store: it outlives a reload. */
@@ -122,12 +145,17 @@ async function latest($: EngineInterface): Promise<Record<string, string>> {
  * Stores the session's note and runs /side-note, which prints it: command
  * output is what the mobile app shows. The command runs from a timer, outside
  * any hook, because $.command.run refuses a call inside a hook the turn waits
- * on; the engine queues it until the session is idle.
+ * on; the engine queues it until the session is idle. While one is queued the
+ * mod queues no other: the queued one prints the latest note when it runs.
  */
 async function deliver($: EngineInterface, note: string, source: string): Promise<void> {
   const sid = await $.session.id()
   const others = Object.entries(await latest($)).filter(([key]) => key !== sid)
   await $.store.set('latest', Object.fromEntries([...others, [sid, note]].slice(-MAX_SESSIONS)))
+  const now = Date.now()
+  const queuedAt = (await pending($))[sid]
+  if (queuedAt !== undefined && now - queuedAt < PENDING_MS) return
+  await setPending($, sid, now)
   $.clock.after(500, () => {
     $.command.run({ command: COMMAND }).then(
       () => log($, { event: 'command', source, result: 'ran' }),
@@ -158,7 +186,7 @@ async function check($: EngineInterface): Promise<void> {
     if (view === undefined) return
     const note = compose(session?.tag, view)
     if (note === undefined) return
-    const id = idOf(view)
+    const id = keyOf(sid, view)
     const stored = await $.store.get('delivered').catch(() => undefined)
     const delivered = Array.isArray(stored) ? (stored as string[]) : []
     if (delivered.includes(id)) return
@@ -212,7 +240,10 @@ export const register: Register = on => {
     if (!blocks.some(b => textOf(b)?.includes(FALLBACK))) return next(e)
     let note: string | undefined
     try {
-      note = (await latest($))[await $.session.id()]
+      const sid = await $.session.id()
+      note = (await latest($))[sid]
+      // the queued /side-note has run: the next note may queue a new one
+      await setPending($, sid, undefined)
     } catch {
       note = undefined
     }
@@ -225,9 +256,10 @@ export const register: Register = on => {
     return next({ ...e, message: { ...e.message, content } })
   })
 
-  // On the computer (terminal, desktop app, VS Code) the note is already in the
-  // band above the prompt, so the automatic output becomes one line. The mobile
-  // app is not a mod surface: this hook does not reach it and the note stays whole.
+  // On the computer the note is already in the band above the prompt, so the
+  // automatic output becomes one line where the surface asks mods to draw it.
+  // The VS Code extension (2.1.322) does not ask, and there the note shows in
+  // full. The mobile app is not a mod surface: the note stays whole there.
   on('ui.render', { component: 'CommandOutput' }, ($, e, next) => {
     const p = e.props
     if (p.command !== COMMAND || p.isErrored || p.text.includes(MANUAL) || p.text.includes(NO_NOTE)) return next(e)
