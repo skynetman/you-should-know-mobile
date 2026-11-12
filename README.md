@@ -44,7 +44,7 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 - Runs one slash command by itself, `/side-note`, at most once per note and never while one is already queued. Claude Code starts it when the session is idle.
 - Hooks the `session.append` event to change a single kind of row: the one where `/side-note` holds Claude Code's fallback message, which gets the note instead. Every other row passes as it is.
 - Sends nothing over the network.
-- Each delivered note becomes part of the conversation and adds a few hundred tokens. Claude Code hands command output to the model as context, not as a request, so Claude does not act on a note by itself: to have one taken into account, say so in your next message (for example, "consider the note above").
+- Each delivered note becomes part of the conversation and adds a few hundred tokens. Claude Code hands command output to the model as context, not as a request, so Claude does not act on a note by itself: to have one taken into account, say so in your next message (for example, "consider the note above"). Under each note the mod adds a line telling Claude that the side agent wrote it and that you have neither asked for it nor approved it.
 
 ## Requirements
 
@@ -55,6 +55,7 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 
 - The mod depends on two things Claude Code does not document: the format of the built-in plugin's data file, and the text of the fallback message. A Claude Code update can break either one without warning; `/side-note-test` checks the second.
 - A note arrives at the end of the turn, not when the side agent writes it.
+- Claude still reads every delivered note. The line under it lowers the risk that Claude takes a note as your approval; it does not remove it.
 - On the phone you get the text only, without the band's buttons. An explanation is included only when the side agent has already written it.
 - In a session started from the phone, with no terminal or editor attached, the built-in plugin does not launch its side agent, so there are no notes to bring.
 - In the VS Code extension you see each note twice: above the prompt and in the chat.
