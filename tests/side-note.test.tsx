@@ -1,0 +1,100 @@
+import { expect, mock, test } from 'claude-code/testing'
+
+const PLUGIN = 'you-should-know-mobile'
+const SID = 'session-1'
+const NOTE = 'You should know · Heads up\n\nThe script asks for a broad permission.\n\nIt has `$&` and ```fences``` inside.'
+// The text the engine prints when no hook answers /side-note run by the mod
+// (Claude Code 2.1.322), inside the transcript row's stdout tag.
+const FALLBACK_ROW =
+  '<local-command-stdout>you-should-know-mobile registered /side-note but no command.run hook answered it: add on("command.run", { command: "side-note" }, ($, e) => ({ text: ... })) to the plugin.</local-command-stdout>'
+// /side-note typed on the phone
+const RUN = {
+  command: 'side-note',
+  args: '',
+  origin: { kind: 'bridge' },
+  presentation: { isFullscreen: false, columns: 80 },
+} as const
+// a command's output row as the engine appends it
+const row = (text: string, uuid: string) => ({
+  message: { type: 'system' as const, name: 'local_command', content: [{ type: 'text' as const, text }] },
+  door: 'command' as const,
+  origin: { kind: 'bridge' as const },
+  uuid,
+})
+
+test('/side-note typed by hand prints the latest note in a code block', async ($, on) => {
+  mock.store(on, { latest: { [SID]: NOTE } })
+  on('session.id', () => ({ value: SID }))
+
+  const { text } = await $.command.run(RUN)
+
+  expect(text).toContain('Latest note:')
+  expect(text).toContain('You should know · Heads up')
+  // the fence is longer than the ``` inside the note
+  expect(text).toContain('````\nThe script asks for a broad permission.')
+  expect(text).toContain('$&')
+})
+
+test('/side-note with no note says so', async ($, on) => {
+  mock.store(on)
+  on('session.id', () => ({ value: SID }))
+
+  const { text } = await $.command.run(RUN)
+
+  expect(text).toBe('No "You should know" note in this session yet.')
+})
+
+test('the fallback row gets the note, inside the stdout tags', async ($, on) => {
+  mock.store(on, { latest: { [SID]: NOTE } })
+  on('session.id', () => ({ value: SID }))
+  const session = mock.session(on)
+
+  await $.session.append(row(FALLBACK_ROW, 'row-1'))
+
+  const rows = session.appended()
+  const last = rows[rows.length - 1]
+  const block = last?.message.content[0] as { type: string; text?: string } | undefined
+  expect(block?.text?.startsWith('<local-command-stdout>You should know · Heads up\n\n````')).toBe(true)
+  expect(block?.text?.endsWith('````</local-command-stdout>')).toBe(true)
+  expect(block?.text).not.toContain('registered /side-note')
+})
+
+test('any other system row is left alone', async ($, on) => {
+  mock.store(on, { latest: { [SID]: NOTE } })
+  on('session.id', () => ({ value: SID }))
+  const session = mock.session(on)
+
+  await $.session.append(row('something else', 'row-2'))
+
+  const rows = session.appended()
+  const block = rows[rows.length - 1]?.message.content[0] as { type: string; text?: string } | undefined
+  expect(block?.text).toBe('something else')
+})
+
+const OUTPUT = { plugin: PLUGIN, component: 'CommandOutput', requestId: 'row-1' } as const
+
+test('on the computer the automatic output is one line, the manual one stays whole', async ($, on) => {
+  // stands for the engine's own drawing of the row
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+
+  for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
+    const auto = await $.ui.mount({
+      ...OUTPUT,
+      surface,
+      props: { command: 'side-note', args: '', text: 'You should know · Heads up', isErrored: false },
+    })
+    expect((await auto.find({ type: 'Text', text: /sent to the chat/ }))?.text).toContain('band above the prompt')
+    await auto.unmount()
+
+    const manual = await $.ui.mount({
+      ...OUTPUT,
+      surface,
+      props: { command: 'side-note', args: '', text: 'Latest note:\n\nYou should know · Heads up', isErrored: false },
+    })
+    expect((await manual.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+    await manual.unmount()
+  }
+})

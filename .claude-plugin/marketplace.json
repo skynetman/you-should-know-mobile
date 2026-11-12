@@ -1,0 +1,6 @@
+{
+  "name": "you-should-know-mobile",
+  "description": "One mod: notes from the built-in \"You should know\" side agent, delivered to the Claude mobile app",
+  "owner": { "name": "Skynetman" },
+  "plugins": [{ "name": "you-should-know-mobile", "source": "./" }]
+}

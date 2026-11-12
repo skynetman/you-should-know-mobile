@@ -1,0 +1,13 @@
+{
+  "name": "you-should-know-mobile",
+  "displayName": "You should know mobile",
+  "version": "0.1.1",
+  "description": "Brings the notes of the built-in \"You should know\" side agent to the Claude mobile app: for each new note it runs /side-note, whose output reaches the phone through Remote Control, with the note in a code block you can copy. On the computer the output stays one line, since the note is already above the prompt.",
+  "author": {
+    "name": "Skynetman"
+  },
+  "homepage": "https://github.com/skynetman/you-should-know-mobile",
+  "repository": "https://github.com/skynetman/you-should-know-mobile",
+  "license": "MIT",
+  "keywords": ["you-should-know", "side-agent", "remote-control", "mobile", "mod"]
+}

@@ -1,0 +1,4 @@
+{
+  "description": "you-should-know-mobile: a clock.every reads the notes of the built-in You should know plugin; for each new note command.run starts /side-note, whose output also reaches the Claude mobile app; session.append puts the note in place of the engine's fallback text; ui.render keeps the output to one line on the computer",
+  "modules": ["./register.tsx"]
+}
