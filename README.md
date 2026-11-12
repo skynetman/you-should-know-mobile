@@ -36,12 +36,13 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 - `/side-note`: typed by hand, prints the latest note of the session again, in full on every screen.
 - `/side-note-test`: replaces the session's latest note with a dummy one and sends it the same way as a real one. Use it after a Claude Code update to check that delivery still works.
 
-## What it reads, writes, and runs
+## What it reads, stores, and runs
 
 - Reads `~/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json`, the built-in plugin's data file, every 4 seconds.
 - Keeps the latest note of each of the last 50 sessions in its own plugin store, along with the IDs of the notes it has already delivered.
-- Appends one line to `~/.claude/you-should-know-mobile/events.jsonl` for each command it runs, and for each read error that differs from the previous one.
-- Runs `/side-note` by itself, and rewrites the transcript row of that command as described above.
+- Logs its last 100 events in the same store: each command it runs, and each read error that differs from the previous one. It writes no file.
+- Runs one slash command by itself, `/side-note`, once for each new note, and Claude Code queues it until the session is idle.
+- Hooks the `session.append` event to change a single kind of row: the one where `/side-note` holds Claude Code's fallback message, which gets the note instead. Every other row passes as it is.
 - Sends nothing over the network.
 - Each delivered note becomes part of the conversation, adding a few hundred tokens, and the model reads it as context, so you don't need to paste it back to Claude.
 

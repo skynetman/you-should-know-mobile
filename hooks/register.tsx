@@ -40,7 +40,8 @@ type View = {
 }
 type BuiltinSession = { id?: string; tag?: string; view?: View }
 
-let logDir: string | undefined
+const MAX_EVENTS = 100
+
 let isChecking = false
 /** The last read error logged: the same error is logged once, not every 4 seconds. */
 let lastError: string | undefined
@@ -52,17 +53,16 @@ async function home($: EngineInterface): Promise<string | undefined> {
   return dir ? dir.replace(/\\/g, '/') : undefined
 }
 
+/**
+ * Keeps the last 100 events (commands run, read errors) in the plugin's own
+ * store, under the key "events". The mod writes no file.
+ */
 async function log($: EngineInterface, row: Record<string, unknown>): Promise<void> {
   try {
-    if (logDir === undefined) {
-      const dir = await home($)
-      if (dir === undefined) return
-      logDir = `${dir}/.claude/you-should-know-mobile`
-    }
-    const file = `${logDir}/events.jsonl`
-    const before = (await $.fs.exists(file)) ? await $.fs.read(file) : ''
-    const line = JSON.stringify({ at: new Date().toISOString(), ...row })
-    await $.fs.write(file, `${before}${line}\n`)
+    const stored = await $.store.get('events').catch(() => undefined)
+    const events = Array.isArray(stored) ? stored : []
+    const event = { at: new Date().toISOString(), ...row }
+    await $.store.set('events', [...events, event].slice(-MAX_EVENTS))
   } catch {
     // logging must never stop the mod
   }
