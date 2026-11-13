@@ -22,6 +22,11 @@ import type { EngineInterface, Register } from 'claude-code'
 
 /** The session's latest note, a $.state family keyed by session id. */
 const NOTE = { plugin: 'you-should-know-mobile', key: 'note' } as const
+/**
+ * Set at session.start, a $.state family keyed by session id: present when the
+ * mod is reloaded, missing when the session starts in a new Claude Code process.
+ */
+const STARTED = { plugin: 'you-should-know-mobile', key: 'started' } as const
 const STORE_PREFIX = 'cc-plugin-you-should-know_builtin-'
 const COMMAND = 'side-note'
 const TEST_COMMAND = 'side-note-test'
@@ -193,6 +198,19 @@ async function latest($: EngineInterface, sid: string): Promise<string | undefin
   return typeof value === 'string' ? value : undefined
 }
 
+/**
+ * A /side-note queued by a Claude Code process that has closed never runs, and
+ * its mark would hold back the session's notes for up to PENDING_MS: in a new
+ * process the mark goes. On a reload of the mod the queued command still runs,
+ * so the mark stays.
+ */
+async function clearClosedQueue($: EngineInterface): Promise<void> {
+  const sid = await $.session.id()
+  const { value } = await $.state.get({ ...STARTED, id: sid })
+  if (value === undefined) await setPending($, sid, undefined)
+  await $.state.set({ ...STARTED, id: sid }, Date.now())
+}
+
 /** How many notes each session has had printed, so each one gets a number. */
 async function numbers($: EngineInterface): Promise<Record<string, number>> {
   const all = await $.store.get('numbers').catch(() => undefined)
@@ -290,6 +308,7 @@ export const register: Register = on => {
       description: 'Test you-should-know-mobile: store a dummy note and deliver it with /side-note',
     })
     await forgetStoredText($)
+    await clearClosedQueue($)
     $.clock.every(EVERY_MS, () => {
       void check($)
     })

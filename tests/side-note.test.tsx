@@ -1,5 +1,5 @@
 import type { On } from 'claude-code'
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type Engine } from 'claude-code/testing'
 
 const PLUGIN = 'you-should-know-mobile'
 const SID = 'session-1'
@@ -192,6 +192,38 @@ test('printed notes are numbered in the session', async ($, on) => {
   const texts = session.appended().map(r => (r.message.content[0] as { type: string; text?: string } | undefined)?.text ?? '')
   expect(texts.some(t => t.includes('· #1') && t.includes('Line A'))).toBe(true)
   expect(texts.some(t => t.includes('· #2') && t.includes('Line B'))).toBe(true)
+})
+
+// A /side-note queued in a session, as the store keeps it, and a new note
+// that the side agent writes after the session starts.
+async function startWithQueue($: Engine, on: On): Promise<string[]> {
+  const clock = mock.clock(on, { now: 1000 })
+  mock.store(on, { pending: { [SID]: Date.now() } })
+  mock.env(on, { HOME: '/home/u' })
+  mock.session(on)
+  on('session.id', () => ({ value: SID }))
+  on('command.register', () => ({ value: { command: 'side-note' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.list', () => ({ value: [BUILTIN_ENTRY] }))
+  on('fs.read', () => ({ value: builtinFile({ kind: 'offer', line: 'Line C', shownAt: 5 }) }))
+  const runs: string[] = []
+  on('command.run', (_, e) => {
+    runs.push(e.command)
+    return { text: '' }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(4600)
+  return runs
+}
+
+test('in a new Claude Code process, a /side-note left queued by the closed one does not hold back new notes', async ($, on) => {
+  expect(await startWithQueue($, on)).toEqual(['side-note'])
+})
+
+test('on a reload of the mod, the queued /side-note still counts and no second one is queued', async ($, on) => {
+  // the mark set when the mod started in this process, which a reload keeps
+  on('state.get', ($, e, next) => (e.key === 'started' ? { value: { value: 1, version: 1 } } : next(e)))
+  expect(await startWithQueue($, on)).toEqual([])
 })
 
 // The plugin's store as a file on disk would hold it.

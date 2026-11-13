@@ -39,11 +39,11 @@ The "You should know" plugin must be on. It is off by default; to turn it on, ad
 ## What it reads, stores, and runs
 
 - Reads `~/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json`, the built-in plugin's data file, every 4 seconds.
-- Holds the session's latest note in the state that Claude Code keeps for the mod during the session (`$.state`), so that the queued `/side-note`, or one you type, can print it, even after a reload of the mod.
+- Holds the session's latest note in the state that Claude Code keeps for the mod during the session (`$.state`), so that the queued `/side-note`, or one you type, can print it, even after a reload of the mod. The same state holds the time the mod started in the current Claude Code process, which tells a reload apart from a new start.
 - Writes no files itself. Its plugin store, a JSON file that Claude Code writes for the mod in `~/.claude/plugins/store/` (the name starts with `you-should-know-mobile_`), holds no note text and contains only the following:
   - for each of the last 200 printed notes, the session ID and a 32-bit FNV-1a hash of the note's one-line summary (for a note without one, the time the built-in plugin showed it), so that no note is printed twice.
   - for each of the last 50 sessions, its ID and how many notes it has printed, for the running number (#1, #2, …) in each note's title.
-  - for each session with a `/side-note` in the queue, its ID and the time the command was queued, removed when it runs, so that only one waits at a time.
+  - for each session with a `/side-note` in the queue, its ID and the time the command was queued, so that only one waits at a time. The entry goes when the command runs, or when the session starts in a new Claude Code process, where that command no longer exists.
   - its last 100 events, for troubleshooting: each row holds the time, the kind of event, its source and the result ("ran" or the error message, which can include a file path). A read error identical to the previous one is not logged again. A parse error in the data file is logged with a fixed text, because the parser's own message could quote part of a note.
 - Runs one slash command by itself, `/side-note`, at most once per note and never while one is already queued. Claude Code starts it when the session is idle.
 - Hooks the `session.append` event to change a single kind of row: the one where `/side-note` holds Claude Code's fallback message, which gets the note instead. Every other row passes as it is.
