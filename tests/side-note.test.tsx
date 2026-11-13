@@ -1,3 +1,4 @@
+import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 const PLUGIN = 'you-should-know-mobile'
@@ -21,9 +22,12 @@ const row = (text: string, uuid: string) => ({
   origin: { kind: 'bridge' as const },
   uuid,
 })
+// the session's latest note, as $.state holds it
+const holdNote = (on: On) => on('state.get', () => ({ value: { value: NOTE, version: 1 } }))
 
 test('/side-note typed by hand prints the latest note in a code block', async ($, on) => {
-  mock.store(on, { latest: { [SID]: NOTE } })
+  mock.store(on)
+  holdNote(on)
   on('session.id', () => ({ value: SID }))
 
   const { text } = await $.command.run(RUN)
@@ -46,7 +50,8 @@ test('/side-note with no note says so', async ($, on) => {
 })
 
 test('the fallback row gets the note, inside the stdout tags', async ($, on) => {
-  mock.store(on, { latest: { [SID]: NOTE } })
+  mock.store(on)
+  holdNote(on)
   on('session.id', () => ({ value: SID }))
   const session = mock.session(on)
 
@@ -61,7 +66,8 @@ test('the fallback row gets the note, inside the stdout tags', async ($, on) => 
 })
 
 test('any other system row is left alone', async ($, on) => {
-  mock.store(on, { latest: { [SID]: NOTE } })
+  mock.store(on)
+  holdNote(on)
   on('session.id', () => ({ value: SID }))
   const session = mock.session(on)
 
@@ -186,4 +192,63 @@ test('printed notes are numbered in the session', async ($, on) => {
   const texts = session.appended().map(r => (r.message.content[0] as { type: string; text?: string } | undefined)?.text ?? '')
   expect(texts.some(t => t.includes('· #1') && t.includes('Line A'))).toBe(true)
   expect(texts.some(t => t.includes('· #2') && t.includes('Line B'))).toBe(true)
+})
+
+// The plugin's store as a file on disk would hold it.
+function disk(on: On, seed: Record<string, unknown>): Map<string, unknown> {
+  const data = new Map(Object.entries(seed))
+  on('store.get', (_, e) => ({ value: data.get(e.key) }))
+  on('store.set', (_, e) => {
+    data.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    return { value: undefined }
+  })
+  on('store.delete', (_, e) => {
+    data.delete(e.key)
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...data.keys()] }))
+  return data
+}
+
+test('no note text reaches the disk, and 0.1.7 texts are removed without delivering a note twice', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  // what 0.1.7 left in the store
+  const data = disk(on, {
+    latest: { [SID]: 'You should know · Heads up · #1\n\nLine A' },
+    delivered: [`${SID}|Line A`],
+    numbers: { [SID]: 1 },
+    events: [{ event: 'read-error', error: 'SyntaxError: Unexpected token, "Line A" is not valid JSON' }],
+  })
+  mock.env(on, { HOME: '/home/u' })
+  const session = mock.session(on)
+  on('session.id', () => ({ value: SID }))
+  on('command.register', () => ({ value: { command: 'side-note' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  let view: unknown = { kind: 'offer', line: 'Line A', shownAt: 1 }
+  on('fs.list', () => ({ value: [BUILTIN_ENTRY] }))
+  on('fs.read', () => ({ value: builtinFile(view) }))
+  const runs: string[] = []
+  on('command.run', (_, e) => {
+    runs.push(e.command)
+    return { text: '' }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(4600)
+  // the note 0.1.7 delivered is not delivered again
+  expect(runs).toEqual([])
+
+  view = { kind: 'offer', line: 'Line B, about Jane Doe', shownAt: 2 }
+  await clock.advance(4600)
+  await $.session.append(row(FALLBACK_ROW, 'row-7'))
+  expect(runs).toEqual(['side-note'])
+  const block = session.appended().at(-1)?.message.content[0] as { type: string; text?: string } | undefined
+  expect(block?.text).toContain('Line B, about Jane Doe')
+  expect(block?.text).toContain('· #2')
+
+  const onDisk = JSON.stringify([...data.entries()])
+  expect(data.has('latest')).toBe(false)
+  expect(onDisk).not.toContain('Line A')
+  expect(onDisk).not.toContain('Line B')
+  expect(onDisk).not.toContain('Jane Doe')
 })

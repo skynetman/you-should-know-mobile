@@ -14,9 +14,14 @@
  * so the note arrives at the end of the turn, and the model reads it as
  * context. /side-note typed by hand shows the latest note again.
  * /side-note-test stores a dummy note and delivers it the same way.
+ *
+ * The text of a note stays only in $.state, which Claude Code holds for the
+ * session: nothing the mod writes to disk ($.store) contains note text.
  */
 import type { EngineInterface, Register } from 'claude-code'
 
+/** The session's latest note, a $.state family keyed by session id. */
+const NOTE = { plugin: 'you-should-know-mobile', key: 'note' } as const
 const STORE_PREFIX = 'cc-plugin-you-should-know_builtin-'
 const COMMAND = 'side-note'
 const TEST_COMMAND = 'side-note-test'
@@ -108,12 +113,55 @@ function format(note: string): string {
   return `${shown}\n\n${NOTICE}`
 }
 
+/** A short code computed from the text (FNV-1a, 32 bits): the text cannot be read back from it. */
+function digest(text: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
 /**
  * One key per note: the short line and its later explanation share the same
- * `line`, so they count as one note and are delivered once.
+ * `line`, so they count as one note and are delivered once. The key holds a
+ * code computed from the line, not the line, since the keys go to disk.
  */
 function keyOf(sid: string, view: View): string {
-  return view.line ? `${sid}|${view.line}` : `${sid}|${view.shownAt ?? 0}`
+  return view.line ? `${sid}|h:${digest(view.line)}` : `${sid}|${view.shownAt ?? 0}`
+}
+
+/**
+ * Up to 0.1.7 the store kept the text of the latest note of each session
+ * ("latest") and keys holding the first line of each note: this removes the
+ * texts and turns each old key into the new form, so no note is delivered twice.
+ */
+async function forgetStoredText($: EngineInterface): Promise<void> {
+  await $.store.delete('latest').catch(() => undefined)
+  const stored = await $.store.get('delivered').catch(() => undefined)
+  if (Array.isArray(stored)) {
+    const keys = stored
+      .filter((k): k is string => typeof k === 'string')
+      .map(k => {
+        const at = k.indexOf('|')
+        if (at < 0) return k
+        const rest = k.slice(at + 1)
+        return /^h:[0-9a-f]{8}$/.test(rest) || /^\d+$/.test(rest) ? k : `${k.slice(0, at)}|h:${digest(rest)}`
+      })
+    await $.store.set('delivered', keys)
+  }
+  // a read error of a file that is not valid JSON may quote the file, which holds note text
+  const events = await $.store.get('events').catch(() => undefined)
+  if (Array.isArray(events)) {
+    const kept = events.filter(v => !(v && typeof v === 'object' && String((v as { error?: unknown }).error).startsWith('SyntaxError')))
+    if (kept.length !== events.length) await $.store.set('events', kept)
+  }
+}
+
+/** The error for the event log; a JSON parse error loses its message, which may quote note text. */
+function describe(err: unknown): string {
+  return err instanceof SyntaxError ? 'SyntaxError: the data file is not valid JSON' : String(err)
 }
 
 /** A queued /side-note older than this is taken as lost, and a new one may be queued. */
@@ -136,16 +184,13 @@ async function setPending($: EngineInterface, sid: string, at: number | undefine
   await $.store.set('pending', Object.fromEntries(next.slice(-MAX_SESSIONS)))
 }
 
-/** The latest note of each session, in $.store: it outlives a reload. */
-async function latest($: EngineInterface): Promise<Record<string, string>> {
-  const all = await $.store.get('latest').catch(() => undefined)
-  const out: Record<string, string> = {}
-  if (all && typeof all === 'object') {
-    for (const [sid, note] of Object.entries(all as Record<string, unknown>)) {
-      if (typeof note === 'string') out[sid] = note
-    }
-  }
-  return out
+/**
+ * The session's latest note, from $.state: Claude Code holds it for the session
+ * and keeps it through a reload of the mod; it is gone when the session ends.
+ */
+async function latest($: EngineInterface, sid: string): Promise<string | undefined> {
+  const { value } = await $.state.get({ ...NOTE, id: sid })
+  return typeof value === 'string' ? value : undefined
 }
 
 /** How many notes each session has had printed, so each one gets a number. */
@@ -161,7 +206,7 @@ async function numbers($: EngineInterface): Promise<Record<string, number>> {
 }
 
 /**
- * Stores the session's note and runs /side-note, which prints it: command
+ * Keeps the session's note in $.state and runs /side-note, which prints it: command
  * output is what the mobile app shows. The command runs from a timer, outside
  * any hook, because $.command.run refuses a call inside a hook the turn waits
  * on; the engine queues it until the session is idle. While one is queued the
@@ -184,8 +229,7 @@ async function deliver($: EngineInterface, note: string, source: string): Promis
   }
   const [head = '', ...rest] = note.split('\n')
   const numbered = [`${head} · #${number}`, ...rest].join('\n')
-  const others = Object.entries(await latest($)).filter(([key]) => key !== sid)
-  await $.store.set('latest', Object.fromEntries([...others, [sid, numbered]].slice(-MAX_SESSIONS)))
+  await $.state.set({ ...NOTE, id: sid }, numbered)
   if (isQueued) return
   await setPending($, sid, now)
   $.clock.after(500, () => {
@@ -225,7 +269,7 @@ async function check($: EngineInterface): Promise<void> {
     await $.store.set('delivered', [...delivered, id].slice(-200))
     await deliver($, note, 'you-should-know')
   } catch (err) {
-    const error = String(err)
+    const error = describe(err)
     if (error !== lastError) {
       lastError = error
       await log($, { event: 'read-error', error })
@@ -245,6 +289,7 @@ export const register: Register = on => {
       name: TEST_COMMAND,
       description: 'Test you-should-know-mobile: store a dummy note and deliver it with /side-note',
     })
+    await forgetStoredText($)
     $.clock.every(EVERY_MS, () => {
       void check($)
     })
@@ -256,7 +301,7 @@ export const register: Register = on => {
   // which the session.append hook below replaces.
   on('command.run', { command: COMMAND }, async $ => {
     try {
-      const note = (await latest($))[await $.session.id()]
+      const note = await latest($, await $.session.id())
       if (note === undefined) return { text: NO_NOTE }
       return { text: `${MANUAL}\n\n${format(note)}` }
     } catch (err) {
@@ -273,7 +318,7 @@ export const register: Register = on => {
     let note: string | undefined
     try {
       const sid = await $.session.id()
-      note = (await latest($))[sid]
+      note = await latest($, sid)
       // the queued /side-note has run: the next note may queue a new one
       await setPending($, sid, undefined)
     } catch {
